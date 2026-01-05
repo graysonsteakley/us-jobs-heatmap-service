@@ -1,0 +1,38 @@
+[
+  {
+    "city": "New York City",
+    "state": "NY",
+    "state_name": "New York",
+    "lat": 40.71427,
+    "lon": -74.00597,
+    "population": 8804190,
+    "radius_miles": 9.779490450587044,
+    "query": "react developer",
+    "total": 389,
+    "error": null
+  },
+  {
+    "city": "Los Angeles",
+    "state": "CA",
+    "state_name": "California",
+    "lat": 34.05223,
+    "lon": -118.24368,
+    "population": 3820914,
+    "radius_miles": 12.238064091903533,
+    "query": "react developer",
+    "total": 124,
+    "error": null
+  },
+  {
+    "city": "Brooklyn",
+    "state": "NY",
+    "state_name": "New York",
+    "lat": 40.6501,
+    "lon": -73.94958,
+    "population": 2736074,
+    "radius_miles": 9.779490450587044,
+    "query": "react developer",
+    "total": 389,
+    "error": null
+  }
+]
