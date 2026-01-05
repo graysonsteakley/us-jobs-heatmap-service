@@ -63,6 +63,13 @@ QUERIES_BY_CATEGORY = {
     ],
 }
 
+SENIORITY_LEVELS = {
+    "entry": ["No Prior Experience Required", "Entry Level"],
+    "mid": ["Associate", "Mid-Senior Level"],
+    "senior": ["Senior Level", "Director"],
+    "all": [],
+}
+
 # Backwards-compatible default set for simple runs.
 JOB_QUERIES = [
     "software engineer",
@@ -158,6 +165,12 @@ def parse_args() -> argparse.Namespace:
         "--query",
         default=os.getenv("JOBS_QUERY", ""),
         help="Single search query to use (blank = all jobs).",
+    )
+    parser.add_argument(
+        "--seniority-level",
+        choices=sorted(SENIORITY_LEVELS.keys()),
+        default=os.getenv("JOBS_SENIORITY_LEVEL", "all"),
+        help="Filter by seniority (entry includes 'No Prior Experience').",
     )
     parser.add_argument(
         "--query-set",
@@ -272,3 +285,16 @@ def resolve_queries(args: argparse.Namespace) -> List[str]:
         return [args.query]
 
     return JOB_QUERIES
+
+
+def resolve_role(args: argparse.Namespace) -> tuple[str | None, List[str]]:
+    """
+    Determine searchQuery and seniorityLevel list.
+    Returns (search_query, seniority_levels).
+    """
+    search_query = args.query.strip() if args.query else None
+    if args.seniority_level == "all":
+        seniority_levels: List[str] = []
+    else:
+        seniority_levels = SENIORITY_LEVELS.get(args.seniority_level, [])
+    return search_query, seniority_levels

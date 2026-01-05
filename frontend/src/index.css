@@ -80,3 +80,46 @@ body {
 .legend-swatch.high {
   background: rgba(255, 0, 60, 0.4);
 }
+
+.section {
+  margin-top: 8px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #333;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #0077cc;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.chip {
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip-active {
+  border-color: #0077cc;
+  background: #e6f1fb;
+  color: #004a8f;
+}

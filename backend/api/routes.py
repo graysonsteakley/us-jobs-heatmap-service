@@ -20,27 +20,48 @@ def register_routes(app, settings: Settings) -> None:
     @app.route("/heatmap", methods=["GET"])
     def heatmap():
         query = request.args.get("query") or None
+        roles = request.args.getlist("role") or request.args.getlist("roles") or None
+        seniority = request.args.get("seniority") or None
+        seniorities = request.args.getlist("seniority") or request.args.getlist("seniorities") or None
         min_total = int(request.args.get("min_total", settings.min_total_default))
         limit = int(request.args.get("limit", settings.limit_default))
-        rows = fetch_heatmap_points(settings.pg_url, settings.pg_table, query=query, min_total=min_total, limit=limit)
+        rows = fetch_heatmap_points(
+            settings.pg_url,
+            settings.pg_table,
+            query=query,
+            roles=roles,
+            seniority_level=seniority,
+            seniority_levels=seniorities,
+            min_total=min_total,
+            limit=limit,
+        )
         return jsonify({"points": rows})
 
     @app.route("/cluster-count", methods=["POST", "OPTIONS"])
     def cluster_count():
         """
         Compute a combined hiring.cafe count for a cluster of locations.
-        Body: { "query": "...", "members": [{ city,state,lat,lon,radius_miles }] }
+        Body: {
+          "query": "...",            # optional single query
+          "queries": ["...", "..."], # optional list of queries (e.g., per role)
+          "members": [{ city,state,lat,lon,radius_miles }],
+          "seniority_level": "entry|mid|senior|all"
+        }
         """
         if request.method == "OPTIONS":
             return ("", 204)
         data = request.get_json(silent=True) or {}
         members = data.get("members") or []
         query = data.get("query") or ""
+        queries = data.get("queries") or []
+        job_title_query = data.get("job_title_query") or None
+        seniority_level = data.get("seniority_level") or None
         if not members:
             return jsonify({"error": "members required"}), 400
 
-        search_state = default_search_state()
-        search_state["searchQuery"] = query
+        search_state_base = default_search_state()
+        if seniority_level and seniority_level != "all":
+            search_state_base["seniorityLevel"] = [seniority_level]
         locations = []
         for m in members:
             try:
@@ -68,12 +89,29 @@ def register_routes(app, settings: Settings) -> None:
         if not locations:
             return jsonify({"error": "no valid members"}), 400
 
-        search_state["locations"] = locations
+        queries_to_run = queries if queries else ([query] if query else [])
+        if not queries_to_run:
+            return jsonify({"error": "query or queries required"}), 400
+
         client = HiringCafeClient(min_delay_s=0.5)
+        breakdown = []
+        total_sum = 0
         try:
-            raw = client.get_total_count(search_state)
-            total = raw.get("total") or raw.get("count")
-            return jsonify({"total": total, "raw": raw})
+            for q in queries_to_run:
+                search_state = merge_overrides(
+                    search_state_base,
+                    {
+                        "locations": locations,
+                        "searchQuery": q,
+                    },
+                )
+                if job_title_query:
+                    search_state["jobTitleQuery"] = job_title_query
+                raw = client.get_total_count(search_state)
+                qtotal = raw.get("total") or raw.get("count") or 0
+                total_sum += qtotal
+                breakdown.append({"query": q, "total": qtotal})
+            return jsonify({"total": total_sum, "breakdown": breakdown})
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
 

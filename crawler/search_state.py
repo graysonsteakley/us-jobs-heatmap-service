@@ -8,14 +8,6 @@ from .cities import City
 JSON = Dict[str, Any]
 
 
-def round_radius_miles(val: float, min_radius: float = 5.0, max_radius: float = 50.0) -> float:
-    """
-    Round radius to nearest 5 miles and clamp to [min_radius, max_radius].
-    """
-    rounded = round(val / 5.0) * 5.0
-    return max(min_radius, min(max_radius, rounded))
-
-
 def default_search_state() -> JSON:
     # Minimal defaults for count-based usage.
     # Add more fields only when you need them.
@@ -67,7 +59,6 @@ def location_from_city(city: City, radius_miles: int = 25) -> JSON:
     Build a hiring.cafe location payload for a given city.
     Radius is expressed in miles because that is what the API expects.
     """
-    radius_miles = round_radius_miles(radius_miles)
     slug = "".join(ch.lower() if ch.isalnum() else "_" for ch in city.name).strip("_")
     return {
         "formatted_address": f"{city.name}, {city.state_code}, United States",
@@ -84,7 +75,7 @@ def location_from_city(city: City, radius_miles: int = 25) -> JSON:
             {"long_name": "United States", "short_name": "US", "types": ["country", "political"]},
         ],
         "population": city.population,
-        "options": {"radius_miles": radius_miles, "ignore_radius": False, "radius": radius_miles},
+        "options": {"radius_miles": radius_miles},
     }
 
 
@@ -93,7 +84,6 @@ def search_state_for_city(
     base: Optional[JSON] = None,
     radius_miles: int = 25,
     query: Optional[str] = None,
-    seniority_levels: Optional[List[str]] = None,
 ) -> JSON:
     """
     Create a search state scoped to a city and radius, optionally overriding query.
@@ -102,8 +92,6 @@ def search_state_for_city(
     st["locations"] = [location_from_city(city, radius_miles)]
     if query is not None:
         st["searchQuery"] = query
-    if seniority_levels:
-        st["seniorityLevel"] = seniority_levels
     return st
 
 
@@ -112,19 +100,9 @@ def search_states_for_cities(
     base: Optional[JSON] = None,
     radius_miles: int = 25,
     query: Optional[str] = None,
-    seniority_levels: Optional[List[str]] = None,
 ) -> List[JSON]:
     """
     Build one search state per city. Useful for iterating and collecting totals.
     """
     base_state = base or default_search_state()
-    return [
-        search_state_for_city(
-            city,
-            base_state,
-            radius_miles,
-            query=query,
-            seniority_levels=seniority_levels,
-        )
-        for city in cities
-    ]
+    return [search_state_for_city(city, base_state, radius_miles, query) for city in cities]

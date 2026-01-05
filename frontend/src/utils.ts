@@ -2,8 +2,14 @@ import type { ClusterMember, ClusteredPoint, HeatPoint } from "./types";
 import Supercluster from "supercluster";
 import type { LatLngBounds } from "leaflet";
 
-export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+export const API_BASE =
+  import.meta.env.VITE_API_BASE || "http://localhost:8000";
 export const MI_TO_METERS = 1609.344;
+const SENIORITY_MAP: Record<string, string[]> = {
+  entry: ["No Prior Experience Required", "Entry Level"],
+  mid: ["Associate", "Mid-Senior Level"],
+  senior: ["Senior Level", "Director"],
+};
 
 export function getColor(total: number, maxTotal: number): string {
   if (total <= 0 || maxTotal <= 0) return "rgba(180,180,180,0.25)";
@@ -47,8 +53,10 @@ function buildClusterIndex(points: HeatPoint[]) {
             radius_miles: p.radius_miles || 0,
             total: p.total || 0,
             query: p.query,
+            seniority_level: p.seniority_level,
             run_at: p.run_at,
             hiring_cafe_url: p.hiring_cafe_url,
+            perRoles: p.perRoles || [],
           },
         ],
       },
@@ -66,25 +74,66 @@ function buildClusterIndex(points: HeatPoint[]) {
   return index;
 }
 
-export function clusterPoints(points: HeatPoint[], bounds: LatLngBounds | null, zoom: number): ClusteredPoint[] {
+export function clusterPoints(
+  points: HeatPoint[],
+  bounds: LatLngBounds | null,
+  zoom: number
+): ClusteredPoint[] {
   const index = buildClusterIndex(points);
   const z = Math.max(0, Math.round(zoom || 0));
   const bbox = bounds
     ? [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]
     : [-180, -85, 180, 85];
-  const clusters = index.getClusters(bbox as [number, number, number, number], z);
+  const clusters = index.getClusters(
+    bbox as [number, number, number, number],
+    z
+  );
   return clusters.map((c: any) => {
     const [lon, lat] = c.geometry.coordinates;
     const props = c.properties || {};
     const members: ClusterMember[] = props.members || [];
     const total = members.reduce((m, mbr) => Math.max(m, mbr.total || 0), 0);
     const sum = members.reduce((s, mbr) => s + (mbr.total || 0), 0);
-    const radius_miles = members.reduce((m, mbr) => Math.max(m, mbr.radius_miles || 0), 0);
+    const radius_miles = members.reduce(
+      (m, mbr) => Math.max(m, mbr.radius_miles || 0),
+      0
+    );
     const cities = Array.from(new Set(members.map((m) => m.city)));
     const states = Array.from(new Set(members.map((m) => m.state)));
     const query = members[0]?.query || null;
+    const senioritySet = new Set<string>();
+    members.forEach((m) => {
+      if (m.seniority_level) senioritySet.add(m.seniority_level);
+    });
+    const seniority_level =
+      senioritySet.size === 1
+        ? Array.from(senioritySet)[0]
+        : senioritySet.size > 1
+        ? "mixed"
+        : members[0]?.seniority_level || null;
     const run_at = members[0]?.run_at || null;
-    const url = buildCombinedUrl(members, query);
+    const url = buildCombinedUrl(members, { query, seniority_level });
+    // Dedupe perRoles by role (keep max total)
+    const perRolesRaw = ((members as any)[0]?.perRoles || []) as Array<{
+      role: string;
+      query: string;
+      total: number;
+      url?: string;
+    }>;
+    const perRolesMap = new Map<
+      string,
+      { role: string; query: string; total: number; url?: string }
+    >();
+    perRolesRaw.forEach((r) => {
+      const prev = perRolesMap.get(r.role);
+      if (!prev || (r.total ?? 0) > (prev.total ?? 0)) {
+        perRolesMap.set(r.role, r);
+      }
+    });
+    const perRoles = Array.from(perRolesMap.values()).map((r) => ({
+      ...r,
+      url: buildCombinedUrl(members, { query: r.query, seniority_level }),
+    }));
     return {
       lat,
       lon,
@@ -92,28 +141,56 @@ export function clusterPoints(points: HeatPoint[], bounds: LatLngBounds | null, 
       sum,
       radius_miles,
       query,
+      seniority_level,
       run_at,
       cities: Array.from(new Set(cities)),
       states: Array.from(new Set(states)),
       hiring_cafe_url: url,
       members,
+      perRoles,
     };
   });
 }
 
-export function buildCombinedUrl(members: ClusterMember[], query: string | null) {
+export function buildCombinedUrl(
+  members: ClusterMember[],
+  opts: { query: string | null; seniority_level: string | null }
+) {
   if (!members.length) return undefined;
+  const { query, seniority_level } = opts;
+  const seniority =
+    seniority_level ||
+    members.find((m) => m.seniority_level)?.seniority_level ||
+    null;
   const locations = members.map((m) => ({
     formatted_address: `${m.city}, ${m.state}, United States`,
     types: ["locality", "political"],
     geometry: { location: { lat: m.lat, lon: m.lon } },
-    id: `city_${m.city.toLowerCase().replace(/\s+/g, "_")}_${m.state.toLowerCase()}`,
+    id: `city_${m.city
+      .toLowerCase()
+      .replace(/\s+/g, "_")}_${m.state.toLowerCase()}`,
     address_components: [
-      { long_name: m.city, short_name: m.city, types: ["locality", "political"] },
-      { long_name: m.state, short_name: m.state, types: ["administrative_area_level_1", "political"] },
-      { long_name: "United States", short_name: "US", types: ["country", "political"] },
+      {
+        long_name: m.city,
+        short_name: m.city,
+        types: ["locality", "political"],
+      },
+      {
+        long_name: m.state,
+        short_name: m.state,
+        types: ["administrative_area_level_1", "political"],
+      },
+      {
+        long_name: "United States",
+        short_name: "US",
+        types: ["country", "political"],
+      },
     ],
-    options: { radius_miles: m.radius_miles || 25, ignore_radius: false, radius: m.radius_miles || 25 },
+    options: {
+      radius_miles: m.radius_miles || 25,
+      ignore_radius: false,
+      radius: m.radius_miles || 25,
+    },
   }));
   const searchState = {
     locations,
@@ -123,6 +200,11 @@ export function buildCombinedUrl(members: ClusterMember[], query: string | null)
     dateFetchedPastNDays: 61,
     sortBy: "default",
   };
+  if (seniority && seniority !== "all") {
+    (searchState as any).seniorityLevel = SENIORITY_MAP[seniority] || [
+      seniority,
+    ];
+  }
   const encoded = encodeURIComponent(JSON.stringify(searchState));
   return `https://hiring.cafe/?searchState=${encoded}`;
 }

@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import json
 import urllib.parse
-from typing import Dict, Tuple
+from datetime import date
+from typing import Dict, Tuple, Optional
 
 from .util import normalize_place_name
+SENIORITY_MAP = {
+    "entry": ["No Prior Experience Required", "Entry Level"],
+    "mid": ["Associate", "Mid-Senior Level"],
+    "senior": ["Senior Level", "Director"],
+}
 
 
 def ensure_psycopg():
@@ -98,10 +104,16 @@ def save_city_results_to_pg(
     create_table: bool,
     query: str,
     radius_miles: float,
+    role: Optional[str] = None,
+    seniority_level: Optional[str] = None,
+    job_title_query: Optional[str] = None,
+    run_date: Optional[date] = None,
 ) -> None:
     psycopg = ensure_psycopg()
     connect = psycopg.connect
     sql = psycopg.sql
+
+    run_dt = run_date or date.today()
 
     with connect(pg_url) as conn:
         with conn.cursor() as cur:
@@ -119,22 +131,48 @@ def save_city_results_to_pg(
                             population INTEGER,
                             radius_miles INTEGER,
                             query TEXT,
+                            job_title_query TEXT,
+                            role TEXT,
+                            seniority_level TEXT,
                             total INTEGER,
                             error TEXT,
-                            run_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                            run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            run_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                            UNIQUE (city, state_code, query, seniority_level, run_date)
                         )
                         """
                     ).format(table_name=sql.Identifier(table))
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {idx} ON {table_name} (query, seniority_level, run_date)"
+                    ).format(
+                        idx=sql.Identifier(f"{table}_query_level_date_idx"),
+                        table_name=sql.Identifier(table),
+                    )
                 )
 
             insert_sql = sql.SQL(
                 """
                 INSERT INTO {table_name} (
                     city, state_code, state_name, lat, lon, population,
-                    radius_miles, query, total, error
+                    radius_miles, query, job_title_query, role, seniority_level,
+                    total, error, run_date
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
+                ON CONFLICT (city, state_code, query, seniority_level, run_date)
+                DO UPDATE SET
+                    total = EXCLUDED.total,
+                    error = EXCLUDED.error,
+                    population = EXCLUDED.population,
+                    radius_miles = EXCLUDED.radius_miles,
+                    lat = EXCLUDED.lat,
+                    lon = EXCLUDED.lon,
+                    state_name = EXCLUDED.state_name,
+                    query = EXCLUDED.query,
+                    job_title_query = EXCLUDED.job_title_query,
+                    run_at = NOW()
                 """
             ).format(table_name=sql.Identifier(table))
 
@@ -148,8 +186,12 @@ def save_city_results_to_pg(
                     r.city.population,
                     r.radius_miles or radius_miles,
                     query,
+                    job_title_query,
+                    role,
+                    seniority_level,
                     r.total,
                     r.error,
+                    run_dt,
                 )
                 for r in results
             ]
@@ -157,7 +199,16 @@ def save_city_results_to_pg(
         conn.commit()
 
 
-def fetch_heatmap_points(pg_url: str, table: str, query: str | None = None, min_total: int = 0, limit: int = 1000):
+def fetch_heatmap_points(
+    pg_url: str,
+    table: str,
+    query: str | None = None,
+    roles: list[str] | None = None,
+    seniority_level: str | None = None,
+    seniority_levels: list[str] | None = None,
+    min_total: int = 0,
+    limit: int = 1000,
+):
     psycopg = ensure_psycopg()
     connect = psycopg.connect
     sql = psycopg.sql
@@ -165,11 +216,12 @@ def fetch_heatmap_points(pg_url: str, table: str, query: str | None = None, min_
         with conn.cursor() as cur:
             base = sql.SQL(
                 """
-                SELECT DISTINCT ON (city, state_code)
-                    city, state_code, state_name, lat, lon, radius_miles, total, query, run_at
+                SELECT DISTINCT ON (city, state_code, query, seniority_level)
+                    city, state_code, state_name, lat, lon, radius_miles,
+                    total, query, job_title_query, role, seniority_level, run_at
                 FROM {table_name}
                 {where}
-                ORDER BY city, state_code, run_at DESC
+                ORDER BY city, state_code, query, seniority_level, run_at DESC
                 LIMIT %s
                 """
             )
@@ -178,6 +230,13 @@ def fetch_heatmap_points(pg_url: str, table: str, query: str | None = None, min_
             if query:
                 clauses.append("query = %s")
                 params.append(query)
+            if roles:
+                clauses.append("role = ANY(%s)")
+                params.append(roles)
+            levels = seniority_levels or ([seniority_level] if seniority_level else None)
+            if levels:
+                clauses.append("seniority_level = ANY(%s)")
+                params.append(levels)
             if min_total > 0:
                 clauses.append("total >= %s")
                 params.append(min_total)
@@ -189,7 +248,16 @@ def fetch_heatmap_points(pg_url: str, table: str, query: str | None = None, min_
                 (*params, limit),
             )
             rows = cur.fetchall()
-    def hiring_cafe_url(city: str, state: str, lat: float, lon: float, radius_miles: float, search_query: str | None):
+    def hiring_cafe_url(
+        city: str,
+        state: str,
+        lat: float,
+        lon: float,
+        radius_miles: float,
+        search_query: str | None,
+        job_title_query: str | None,
+        seniority_level: str | None,
+    ):
         search_state = {
             "locations": [
                 {
@@ -215,6 +283,11 @@ def fetch_heatmap_points(pg_url: str, table: str, query: str | None = None, min_
             "dateFetchedPastNDays": 61,
             "sortBy": "default",
         }
+        # Prefer jobTitleQuery when present (role-based queries)
+        if job_title_query:
+            search_state["jobTitleQuery"] = job_title_query
+        if seniority_level and seniority_level != "all":
+            search_state["seniorityLevel"] = SENIORITY_MAP.get(seniority_level, [seniority_level])
         encoded = urllib.parse.quote(json.dumps(search_state))
         return f"https://hiring.cafe/?searchState={encoded}"
 
@@ -232,8 +305,20 @@ def fetch_heatmap_points(pg_url: str, table: str, query: str | None = None, min_
             "radius_miles": radius_val,
             "total": r[6],
             "query": r[7],
-            "run_at": r[8].isoformat() if r[8] else None,
+            "job_title_query": r[8],
+            "role": r[9],
+            "seniority_level": r[10],
+            "run_at": r[11].isoformat() if r[11] else None,
         }
-        entry["hiring_cafe_url"] = hiring_cafe_url(entry["city"], entry["state"], lat, lon, radius_val, entry["query"])
+        entry["hiring_cafe_url"] = hiring_cafe_url(
+            entry["city"],
+            entry["state"],
+            lat,
+            lon,
+            radius_val,
+            entry["query"],
+            entry["job_title_query"],
+            entry["seniority_level"],
+        )
         result.append(entry)
     return result

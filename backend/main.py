@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from crawler.config import parse_args, resolve_queries
+from crawler.config import parse_args, resolve_queries, resolve_role
 from crawler.areas import build_area_lookup, radius_from_lookup
 from crawler.db import save_city_results_to_pg
 from crawler.cities import load_us_cities
@@ -50,6 +50,11 @@ def run_city_mode(client: HiringCafeClient, args, base_state) -> None:
     if args.query_list or args.query_set:
         print("--query-list/--query-set provided but cities mode uses a single --query; ignoring those values.")
 
+    search_query, seniority_levels = resolve_role(args)
+    effective_query: str | None = search_query or args.query or None
+    role_label = args.query or "all"
+    seniority_label = args.seniority_level or "all"
+
     limit = args.city_limit or None
     try:
         cities = load_us_cities(min_population=args.min_population, limit=limit)
@@ -86,7 +91,8 @@ def run_city_mode(client: HiringCafeClient, args, base_state) -> None:
         radius_selector=radius_selector,
         concurrency=max(1, args.concurrency),
         base_search_state=base_state,
-        query=args.query,
+        query=effective_query,
+        seniority_levels=seniority_levels,
     )
 
     for r in results:
@@ -101,8 +107,10 @@ def run_city_mode(client: HiringCafeClient, args, base_state) -> None:
             results=results,
             path=Path(args.output),
             fmt=args.output_format,
-            query=args.query,
+            query=effective_query,
             radius_miles=args.radius_miles,
+            role=role_label,
+            seniority_level=seniority_label,
         )
     if args.pg_url:
         try:
@@ -111,8 +119,10 @@ def run_city_mode(client: HiringCafeClient, args, base_state) -> None:
                 pg_url=args.pg_url,
                 table=args.pg_table,
                 create_table=args.pg_create_table,
-                query=args.query,
+                query=effective_query,
                 radius_miles=args.radius_miles,
+                role=role_label,
+                seniority_level=seniority_label,
             )
         except RuntimeError as exc:
             print(f"Postgres save failed: {exc}")
@@ -123,8 +133,10 @@ def save_city_results(
     results,
     path: Path,
     fmt: str,
-    query: str,
+    query: str | None,
     radius_miles: float,
+    role: str,
+    seniority_level: str,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if fmt == "json":
@@ -137,7 +149,9 @@ def save_city_results(
                 "lon": r.city.longitude,
                 "population": r.city.population,
                 "radius_miles": r.radius_miles or radius_miles,
-                "query": query,
+                "query": query or "",
+                "role": role,
+                "seniority_level": seniority_level,
                 "total": r.total,
                 "error": r.error,
             }
@@ -159,6 +173,8 @@ def save_city_results(
                 "population",
                 "radius_miles",
                 "query",
+                "role",
+                "seniority_level",
                 "total",
                 "error",
             ],
@@ -174,7 +190,9 @@ def save_city_results(
                     "lon": r.city.longitude,
                     "population": r.city.population,
                     "radius_miles": r.radius_miles or radius_miles,
-                    "query": query,
+                    "query": query or "",
+                    "role": role,
+                    "seniority_level": seniority_level,
                     "total": r.total,
                     "error": r.error or "",
                 }

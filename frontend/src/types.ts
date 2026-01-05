@@ -7,8 +7,10 @@ export type HeatPoint = {
   radius_miles: number | null;
   total: number;
   query: string | null;
+  seniority_level?: string | null;
   run_at: string | null;
   hiring_cafe_url?: string;
+  perRoles?: { role: string; query: string; total: number; url?: string }[];
 };
 
 export type ClusterMember = {
@@ -19,8 +21,10 @@ export type ClusterMember = {
   radius_miles: number;
   total: number;
   query: string | null;
+  seniority_level?: string | null;
   run_at: string | null;
   hiring_cafe_url?: string;
+  perRoles?: { role: string; query: string; total: number; url?: string }[];
 };
 
 export type ClusteredPoint = {
@@ -30,9 +34,11 @@ export type ClusteredPoint = {
   sum: number; // sum of member totals
   radius_miles: number | null;
   query: string | null;
+  seniority_level?: string | null;
   run_at: string | null;
   cities: string[];
   states: string[];
   hiring_cafe_url?: string;
   members?: ClusterMember[];
+  perRoles?: { role: string; query: string; total: number; url?: string }[];
 };

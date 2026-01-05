@@ -50,8 +50,15 @@ def get_count_for_city(
     radius_miles: float = 25,
     base_search_state: Optional[JSON] = None,
     query: Optional[str] = None,
+    seniority_levels: Optional[List[str]] = None,
 ) -> CityCountResult:
-    st = search_state_for_city(city, base_search_state or default_search_state(), radius_miles, query)
+    st = search_state_for_city(
+        city,
+        base_search_state or default_search_state(),
+        radius_miles,
+        query=query,
+        seniority_levels=seniority_levels,
+    )
     try:
         raw = client.get_total_count(st)
         total = extract_total(raw)
@@ -68,18 +75,35 @@ def get_counts_for_cities(
     concurrency: int = 1,
     base_search_state: Optional[JSON] = None,
     query: Optional[str] = None,
+    seniority_levels: Optional[List[str]] = None,
 ) -> List[CityCountResult]:
     base = base_search_state or default_search_state()
     results: List[CityCountResult] = []
     if concurrency <= 1:
         for city in cities:
             radius = radius_selector(city) if radius_selector else radius_miles
-            results.append(get_count_for_city(client, city, radius, base, query))
+            results.append(
+                get_count_for_city(
+                    client,
+                    city,
+                    radius,
+                    base,
+                    query=query,
+                    seniority_levels=seniority_levels,
+                )
+            )
         return results
 
     def task(city: City) -> CityCountResult:
         radius = radius_selector(city) if radius_selector else radius_miles
-        return get_count_for_city(client, city, radius, base, query)
+        return get_count_for_city(
+            client,
+            city,
+            radius,
+            base,
+            query=query,
+            seniority_levels=seniority_levels,
+        )
 
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         future_map = {executor.submit(task, city): city for city in cities}
