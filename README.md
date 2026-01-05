@@ -54,7 +54,7 @@ npm run dev -- --host
 
 ## UI Preview
 
-![Jobs Heatmap UI](frontend/docs/UI.png)
+![Jobs Heatmap UI](frontend/docs/ui-example.png)
 
 ## Layout
 
